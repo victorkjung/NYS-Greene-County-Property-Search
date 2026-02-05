@@ -24,6 +24,7 @@ from greene_county_fetcher import (
     GREENE_COUNTY_API,
     PROPERTY_CLASS_DESC
 )
+from app import geojson_to_df
 
 st.set_page_config(
     page_title="Data Management | Lanesville Property Finder",
@@ -83,6 +84,24 @@ def get_cache_info():
     return cache_files
 
 
+def get_config():
+    cfg_path = Path("data/config.json")
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {"use_geojson": True}
+    return {"use_geojson": True}
+
+
+def save_config(cfg: dict):
+    cfg_path = Path("data/config.json")
+    cfg_path.parent.mkdir(exist_ok=True)
+    with open(cfg_path, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
 def main():
     st.title("🔧 Data Management")
     st.markdown("*Fetch real parcel data from Greene County ArcGIS*")
@@ -107,7 +126,7 @@ def main():
     st.markdown("---")
     
     # Tabs for different functions
-    tab1, tab2, tab3 = st.tabs(["📡 Fetch Data", "📁 Cached Data", "📤 Upload Data"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📡 Fetch Data", "📁 Cached Data", "📤 Upload Data", "⚙️ Data Source"])
     
     with tab1:
         st.markdown("### Download Greene County Parcels")
@@ -417,6 +436,22 @@ def main():
                 st.error(f"Invalid JSON: {e}")
             except Exception as e:
                 st.error(f"Error processing file: {e}")
+
+    with tab4:
+        st.markdown("### ⚙️ Active Data Source")
+        cfg = get_config()
+        use_geojson = st.radio(
+            "Preferred dataset:",
+            ["GeoJSON", "Cached JSON"],
+            index=0 if cfg.get("use_geojson", True) else 1,
+            help="GeoJSON is preferred if available."
+        )
+        cfg["use_geojson"] = use_geojson == "GeoJSON"
+        if st.button("Save Preference"):
+            save_config(cfg)
+            st.success("Saved data source preference.")
+            st.cache_data.clear()
+            st.rerun()
     
     # Sidebar info
     with st.sidebar:
@@ -444,6 +479,17 @@ def main():
         # Quick stats if data is loaded
         cache_files = get_cache_info()
         main_cache = next((cf for cf in cache_files if cf['filename'] == 'lanesville_parcels.json'), None)
+        geojson_file = Path("data/Greene_County_Tax_Parcels_-8841005964405968865.geojson")
+        geojson_active = False
+        geojson_records = None
+        if geojson_file.exists():
+            try:
+                with open(geojson_file, "r") as f:
+                    data = json.load(f)
+                geojson_records = len(data.get("features", [])) if isinstance(data, dict) else None
+                geojson_active = get_config().get("use_geojson", True)
+            except Exception:
+                geojson_records = None
         
         if main_cache:
             st.markdown("### 📊 Current Dataset")
@@ -453,6 +499,13 @@ def main():
         else:
             st.warning("No data loaded yet")
             st.write("Click **Fetch Data** to download")
+        
+        if geojson_file.exists():
+            st.markdown("### 🗺️ GeoJSON Dataset")
+            if geojson_records is not None:
+                st.write(f"**Records:** {geojson_records:,}")
+            st.write(f"**File:** {geojson_file.name}")
+            st.write(f"**Active:** {'Yes' if geojson_active else 'No'}")
 
 
 if __name__ == "__main__":
