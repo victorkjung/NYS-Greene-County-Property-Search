@@ -878,8 +878,8 @@ def main():
             st.download_button(
                 label="📄 Download Property Report (JSON)",
                 data=json.dumps(selected_parcel.to_dict(), indent=2, default=str),
-                file_name=f\"property_{selected_parcel['parcel_id'].replace('.', '_')}.json\",
-                mime=\"application/json\"
+                file_name=f"property_{selected_parcel['parcel_id'].replace('.', '_')}.json",
+                mime="application/json"
             )
         else:
             st.info("👆 Click on a parcel in the map or select an owner above to view details.")
