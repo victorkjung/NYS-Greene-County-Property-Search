@@ -24,7 +24,6 @@ from greene_county_fetcher import (
     GREENE_COUNTY_API,
     PROPERTY_CLASS_DESC
 )
-from app import geojson_to_df
 
 st.set_page_config(
     page_title="Data Management | Lanesville Property Finder",
