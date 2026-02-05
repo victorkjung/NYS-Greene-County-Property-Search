@@ -4,25 +4,19 @@ Owner Lookup - Detailed owner research and portfolio analysis
 
 import streamlit as st
 import pandas as pd
-import folium
-from streamlit_folium import st_folium
+import pydeck as pdk
 from pathlib import Path
+import html
 
+from constants import CLASS_COLORS
+from ui import apply_base_styles
 st.set_page_config(
     page_title="Owner Lookup | Lanesville Property Finder",
     page_icon="👤",
     layout="wide"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #1a1a2e;
-    }
-    h1, h2, h3, h4 {
-        color: #e94560 !important;
-    }
+apply_base_styles("""
     .owner-card {
         background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
         border: 1px solid #e94560;
@@ -37,8 +31,7 @@ st.markdown("""
         margin: 10px 0;
         border-left: 4px solid #e94560;
     }
-</style>
-""", unsafe_allow_html=True)
+""")
 
 
 @st.cache_data
@@ -47,72 +40,89 @@ def load_data():
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from app import load_parcel_data
-    return load_parcel_data()
+    seed = st.session_state.get("sample_seed", 42)
+    num_parcels = st.session_state.get("num_parcels", 500)
+    return load_parcel_data(num_parcels=num_parcels, seed=seed)
 
 
 def get_parcel_color(property_class):
     """Return color based on property classification"""
-    class_colors = {
-        "2": "#4CAF50",   # Residential - Green
-        "3": "#FFC107",   # Vacant Land - Yellow
-        "9": "#2196F3",   # State/Forest - Blue
-        "1": "#8BC34A",   # Agricultural - Light Green
-        "4": "#FF5722",   # Commercial - Orange
-        "5": "#9C27B0",   # Recreation - Purple
-        "6": "#607D8B",   # Community Service - Gray
-    }
-    return class_colors.get(property_class[0], "#757575")
+    if not property_class:
+        return "#757575"
+    return CLASS_COLORS.get(str(property_class)[0], "#757575")
 
 
 def create_owner_map(parcels_df):
-    """Create map showing all parcels for an owner"""
+    """Create map showing all parcels for an owner using pydeck"""
     center_lat = parcels_df['latitude'].mean()
     center_lon = parcels_df['longitude'].mean()
+    if pd.isna(center_lat) or pd.isna(center_lon):
+        center_lat = 42.1856
+        center_lon = -74.2848
     
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri"
+    working = parcels_df.dropna(subset=["latitude", "longitude"]).copy()
+    working["owner_safe"] = working["owner"].astype(str).apply(html.escape)
+    working["parcel_id_safe"] = working["parcel_id"].astype(str).apply(html.escape)
+    working["property_class_desc_safe"] = working["property_class_desc"].astype(str).apply(html.escape)
+    working["color"] = working["property_class"].apply(get_parcel_color)
+    working["polygon"] = working["coordinates"].apply(
+        lambda coords: [[c[1], c[0]] for c in coords] if isinstance(coords, list) else []
     )
     
-    for _, row in parcels_df.iterrows():
-        color = get_parcel_color(row['property_class'])
-        
-        folium.Polygon(
-            locations=row['coordinates'],
-            color='#e94560',
-            weight=2,
-            fill=True,
-            fillColor=color,
-            fillOpacity=0.5,
-            popup=f"""
-            <b>{row['parcel_id']}</b><br>
-            {row['property_class_desc']}<br>
-            {row['acreage']:.2f} acres<br>
-            ${row['assessed_value']:,}
-            """,
-            tooltip=row['parcel_id']
-        ).add_to(m)
-        
-        # Add marker
-        folium.Marker(
-            location=[row['latitude'], row['longitude']],
-            icon=folium.DivIcon(
-                html=f'<div style="font-size: 10px; color: white; text-shadow: 1px 1px 2px black; font-weight: bold;">{row["parcel_id"]}</div>',
-                icon_size=(100, 20),
-                icon_anchor=(50, 10)
+    def hex_to_rgb(color: str) -> list:
+        color = color.lstrip("#")
+        return [int(color[i:i+2], 16) for i in (0, 2, 4)]
+    
+    working["r"] = working["color"].apply(lambda c: hex_to_rgb(c)[0])
+    working["g"] = working["color"].apply(lambda c: hex_to_rgb(c)[1])
+    working["b"] = working["color"].apply(lambda c: hex_to_rgb(c)[2])
+    
+    polygon_df = working[working["polygon"].apply(lambda p: isinstance(p, list) and len(p) >= 3)]
+    
+    layers = []
+    if not polygon_df.empty:
+        layers.append(
+            pdk.Layer(
+                "PolygonLayer",
+                polygon_df,
+                get_polygon="polygon",
+                get_fill_color="[r, g, b]",
+                get_line_color=[233, 69, 96],
+                line_width_min_pixels=1,
+                pickable=True,
+                opacity=0.45,
             )
-        ).add_to(m)
+        )
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            working,
+            get_position="[longitude, latitude]",
+            get_radius=20,
+            get_fill_color=[233, 69, 96],
+            pickable=True,
+            opacity=0.6,
+        )
+    )
     
-    # Fit bounds
-    bounds = [
-        [parcels_df['latitude'].min(), parcels_df['longitude'].min()],
-        [parcels_df['latitude'].max(), parcels_df['longitude'].max()]
-    ]
-    m.fit_bounds(bounds, padding=(20, 20))
+    view_state = pdk.ViewState(
+        latitude=center_lat,
+        longitude=center_lon,
+        zoom=13,
+        pitch=35,
+    )
     
-    return m
+    tooltip = {
+        "html": "<b>{parcel_id_safe}</b><br/>{property_class_desc_safe}<br/>Acres: {acreage}<br/>Assessed: ${assessed_value}",
+        "style": {"backgroundColor": "#16213e", "color": "white"},
+    }
+    
+    return pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_style="mapbox://styles/mapbox/satellite-v9",
+        tooltip=tooltip,
+    )
 
 
 def main():
@@ -194,8 +204,8 @@ def main():
             
             with col1:
                 st.markdown("##### 🗺️ Property Locations")
-                m = create_owner_map(owner_parcels)
-                st_folium(m, width=None, height=400)
+                deck = create_owner_map(owner_parcels)
+                st.pydeck_chart(deck, height=400)
             
             with col2:
                 st.markdown("##### 📬 Mailing Address")

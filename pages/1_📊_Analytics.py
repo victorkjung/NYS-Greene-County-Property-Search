@@ -9,30 +9,14 @@ import plotly.graph_objects as go
 from pathlib import Path
 import json
 
+from ui import apply_base_styles
 st.set_page_config(
     page_title="Analytics | Lanesville Property Finder",
     page_icon="📊",
     layout="wide"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #1a1a2e;
-    }
-    h1, h2, h3 {
-        color: #e94560 !important;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
-        border: 1px solid #e94560;
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-    }
-</style>
-""", unsafe_allow_html=True)
+apply_base_styles()
 
 
 @st.cache_data
@@ -42,7 +26,9 @@ def load_data():
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from app import load_parcel_data
-    return load_parcel_data()
+    seed = st.session_state.get("sample_seed", 42)
+    num_parcels = st.session_state.get("num_parcels", 500)
+    return load_parcel_data(num_parcels=num_parcels, seed=seed)
 
 
 def main():
@@ -193,7 +179,8 @@ def main():
         st.metric("Average Tax per Parcel", f"${avg_tax:,.0f}")
     
     with col3:
-        tax_per_acre = total_taxes / df['acreage'].sum()
+    acreage_sum = df['acreage'].sum()
+    tax_per_acre = total_taxes / acreage_sum if acreage_sum else 0
         st.metric("Tax per Acre (avg)", f"${tax_per_acre:,.2f}")
     
     # Tax by property type

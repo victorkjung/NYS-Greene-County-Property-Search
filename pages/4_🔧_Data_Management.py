@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 import sys
 
+from ui import apply_base_styles
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -30,15 +31,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #1a1a2e;
-    }
-    h1, h2, h3, h4 {
-        color: #e94560 !important;
-    }
+apply_base_styles("""
     .success-box {
         background: #1b4332;
         border: 1px solid #40916c;
@@ -61,8 +54,7 @@ st.markdown("""
         font-size: 12px;
         word-break: break-all;
     }
-</style>
-""", unsafe_allow_html=True)
+""")
 
 
 def get_cache_info():

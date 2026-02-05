@@ -10,21 +10,15 @@ from pathlib import Path
 from datetime import datetime
 import io
 
+from nys_data_fetcher import NYSParcelFetcher
+from ui import apply_base_styles
 st.set_page_config(
     page_title="Download Data | Lanesville Property Finder",
     page_icon="📥",
     layout="wide"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #1a1a2e;
-    }
-    h1, h2, h3, h4 {
-        color: #e94560 !important;
-    }
+apply_base_styles("""
     .download-card {
         background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
         border: 1px solid #e94560;
@@ -38,8 +32,7 @@ st.markdown("""
         padding: 15px;
         margin: 10px 0;
     }
-</style>
-""", unsafe_allow_html=True)
+""")
 
 # Greene County / Catskills area zip codes
 AREA_ZIP_CODES = {
@@ -90,7 +83,9 @@ def load_all_data():
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from app import load_parcel_data
-    return load_parcel_data()
+    seed = st.session_state.get("sample_seed", 42)
+    num_parcels = st.session_state.get("num_parcels", 500)
+    return load_parcel_data(num_parcels=num_parcels, seed=seed)
 
 
 def filter_by_zip(df: pd.DataFrame, zip_code: str) -> pd.DataFrame:
@@ -123,7 +118,7 @@ def filter_by_property_class(df: pd.DataFrame, class_prefix: str) -> pd.DataFram
     return df[df['property_class'].str.startswith(class_prefix)]
 
 
-def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50) -> pd.DataFrame:
+def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50, seed: int | None = None) -> pd.DataFrame:
     """Generate sample parcel data for a specific zip code"""
     import random
     
@@ -133,6 +128,7 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50) -> pd.Dat
     coords = ZIP_COORDINATES[zip_code]
     zip_info = AREA_ZIP_CODES.get(zip_code, {"name": "Unknown", "town": "Unknown", "county": "Greene"})
     
+    rng = random.Random(seed)
     sample_owners = [
         "Johnson Family Trust", "Smith, Robert & Mary", "Mountain View LLC",
         "Catskill Properties Inc", "Williams, Thomas", "NYS DEC",
@@ -164,20 +160,20 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50) -> pd.Dat
     
     parcels = []
     for i in range(num_parcels):
-        lat_offset = random.uniform(-coords['radius'], coords['radius'])
-        lon_offset = random.uniform(-coords['radius'] * 1.3, coords['radius'] * 1.3)
+        lat_offset = rng.uniform(-coords['radius'], coords['radius'])
+        lon_offset = rng.uniform(-coords['radius'] * 1.3, coords['radius'] * 1.3)
         
-        prop_class = random.choice(list(property_classes.keys()))
-        acreage = round(random.uniform(0.5, 50.0), 2)
+        prop_class = rng.choice(list(property_classes.keys()))
+        acreage = round(rng.uniform(0.5, 50.0), 2)
         
         if prop_class in ["322", "910", "920"]:
-            acreage = round(random.uniform(20.0, 150.0), 2)
+            acreage = round(rng.uniform(20.0, 150.0), 2)
         elif prop_class in ["311", "312"]:
-            acreage = round(random.uniform(0.5, 12.0), 2)
+            acreage = round(rng.uniform(0.5, 12.0), 2)
         
-        assessed_value = int(acreage * random.uniform(5000, 20000))
+        assessed_value = int(acreage * rng.uniform(5000, 20000))
         if prop_class in ["210", "220", "240", "260"]:
-            assessed_value += random.randint(100000, 400000)
+            assessed_value += rng.randint(100000, 400000)
         
         lat = coords['lat'] + lat_offset
         lon = coords['lon'] + lon_offset
@@ -191,19 +187,19 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50) -> pd.Dat
         ]
         
         parcel = {
-            "parcel_id": f"{random.randint(80,90)}.{random.randint(1,20)}-{random.randint(1,50)}-{random.randint(1,99)}",
-            "sbl": f"{random.randint(80,90)}.00-{random.randint(1,9)}-{random.randint(1,99)}.{random.randint(0,999):03d}",
-            "owner": random.choice(sample_owners),
-            "mailing_address": f"{random.randint(1, 999)} {random.choice(['Main St', 'Mountain Rd', 'Route 214', 'Route 23A', 'Hollow Rd', 'Creek Rd'])}",
-            "mailing_city": random.choice([zip_info['name'], zip_info['town'], "New York", "Brooklyn"]),
+            "parcel_id": f"{rng.randint(80,90)}.{rng.randint(1,20)}-{rng.randint(1,50)}-{rng.randint(1,99)}",
+            "sbl": f"{rng.randint(80,90)}.00-{rng.randint(1,9)}-{rng.randint(1,99)}.{rng.randint(0,999):03d}",
+            "owner": rng.choice(sample_owners),
+            "mailing_address": f\"{rng.randint(1, 999)} {rng.choice(['Main St', 'Mountain Rd', 'Route 214', 'Route 23A', 'Hollow Rd', 'Creek Rd'])}\",
+            "mailing_city": rng.choice([zip_info['name'], zip_info['town'], \"New York\", \"Brooklyn\"]),
             "mailing_state": "NY",
-            "mailing_zip": zip_code if random.random() > 0.3 else random.choice(["10001", "11201", "12414"]),
+            "mailing_zip": zip_code if rng.random() > 0.3 else rng.choice(["10001", "11201", "12414"]),
             "property_class": prop_class,
             "property_class_desc": property_classes[prop_class],
             "acreage": acreage,
             "assessed_value": assessed_value,
-            "land_value": int(assessed_value * random.uniform(0.2, 0.5)),
-            "improvement_value": int(assessed_value * random.uniform(0.5, 0.8)),
+            "land_value": int(assessed_value * rng.uniform(0.2, 0.5)),
+            "improvement_value": int(assessed_value * rng.uniform(0.5, 0.8)),
             "tax_year": 2024,
             "annual_taxes": round(assessed_value * 0.025, 2),
             "school_district": f"{zip_info['town']}-Tannersville CSD",
@@ -212,10 +208,10 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50) -> pd.Dat
             "latitude": lat,
             "longitude": lon,
             "coordinates": parcel_coords,
-            "deed_book": f"{random.randint(100, 999)}",
-            "deed_page": f"{random.randint(1, 500)}",
-            "last_sale_date": f"{random.randint(1995, 2024)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}",
-            "last_sale_price": random.randint(75000, 600000) if random.random() > 0.4 else None
+            "deed_book": f\"{rng.randint(100, 999)}\",
+            "deed_page": f\"{rng.randint(1, 500)}\",
+            "last_sale_date": f\"{rng.randint(1995, 2024)}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}\",
+            "last_sale_price": rng.randint(75000, 600000) if rng.random() > 0.4 else None
         }
         parcels.append(parcel)
     
@@ -233,9 +229,6 @@ def fetch_from_nys_gis(zip_code: str) -> pd.DataFrame:
     
     coords = ZIP_COORDINATES[zip_code]
     
-    # NYS GIS Tax Parcel service endpoint
-    url = "https://services6.arcgis.com/DZHaqZm9cxOD4CWM/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/0/query"
-    
     # Build bounding box
     bbox = {
         "xmin": coords['lon'] - coords['radius'] * 1.3,
@@ -244,46 +237,24 @@ def fetch_from_nys_gis(zip_code: str) -> pd.DataFrame:
         "ymax": coords['lat'] + coords['radius']
     }
     
-    params = {
-        "where": "1=1",
-        "geometry": json.dumps({
-            "xmin": bbox['xmin'],
-            "ymin": bbox['ymin'],
-            "xmax": bbox['xmax'],
-            "ymax": bbox['ymax'],
-            "spatialReference": {"wkid": 4326}
-        }),
-        "geometryType": "esriGeometryEnvelope",
-        "spatialRel": "esriSpatialRelIntersects",
-        "outFields": "*",
-        "returnGeometry": "true",
-        "f": "geojson",
-        "resultRecordCount": 500
-    }
-    
     try:
         with st.spinner(f"Fetching data from NYS GIS for {zip_code}..."):
-            response = requests.get(url, params=params, timeout=30)
+            fetcher = NYSParcelFetcher()
+            df = fetcher.fetch_parcels(bbox=bbox, county="Greene", max_records=2000)
             
-            if response.status_code == 200:
-                data = response.json()
-                
-                if 'features' in data and len(data['features']) > 0:
-                    st.success(f"Retrieved {len(data['features'])} parcels from NYS GIS")
-                    # Process GeoJSON to DataFrame
-                    # (Would need to implement full processing here)
-                    return pd.DataFrame()  # Placeholder
-                else:
-                    st.info("No data returned from NYS GIS. Using sample data.")
-                    return generate_sample_data_for_zip(zip_code)
-            else:
-                st.warning(f"NYS GIS returned status {response.status_code}. Using sample data.")
-                return generate_sample_data_for_zip(zip_code)
+            if df is not None and not df.empty:
+                st.success(f"Retrieved {len(df)} parcels from NYS GIS")
+                return df
+            
+            st.info("No data returned from NYS GIS. Using sample data.")
+            seed = st.session_state.get(\"sample_seed\", 42)
+            return generate_sample_data_for_zip(zip_code, seed=seed)
                 
     except requests.RequestException as e:
         st.warning(f"Could not connect to NYS GIS: {e}")
         st.info("Generating sample data for demonstration...")
-        return generate_sample_data_for_zip(zip_code)
+        seed = st.session_state.get(\"sample_seed\", 42)
+        return generate_sample_data_for_zip(zip_code, seed=seed)
 
 
 def main():
@@ -365,7 +336,8 @@ def main():
                 
                 for i, zip_code in enumerate(zip_codes):
                     if data_source == "Sample Data (Demo)":
-                        df = generate_sample_data_for_zip(zip_code, num_parcels)
+                        seed = st.session_state.get(\"sample_seed\", 42)
+                        df = generate_sample_data_for_zip(zip_code, num_parcels, seed=seed)
                     else:
                         df = fetch_from_nys_gis(zip_code)
                     
@@ -448,6 +420,9 @@ def main():
                         # GeoJSON export
                         features = []
                         for _, row in combined_df.iterrows():
+                            coords = row.get('coordinates', [])
+                            if not coords or len(coords) < 3:
+                                continue
                             feature = {
                                 "type": "Feature",
                                 "properties": {
@@ -461,8 +436,8 @@ def main():
                                 "geometry": {
                                     "type": "Polygon",
                                     "coordinates": [[
-                                        [coord[1], coord[0]] for coord in row['coordinates']
-                                    ] + [[row['coordinates'][0][1], row['coordinates'][0][0]]]]
+                                        [coord[1], coord[0]] for coord in coords
+                                    ] + [[coords[0][1], coords[0][0]]]]
                                 }
                             }
                             features.append(feature)
