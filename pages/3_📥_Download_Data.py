@@ -190,8 +190,8 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50, seed: int
             "parcel_id": f"{rng.randint(80,90)}.{rng.randint(1,20)}-{rng.randint(1,50)}-{rng.randint(1,99)}",
             "sbl": f"{rng.randint(80,90)}.00-{rng.randint(1,9)}-{rng.randint(1,99)}.{rng.randint(0,999):03d}",
             "owner": rng.choice(sample_owners),
-            "mailing_address": f\"{rng.randint(1, 999)} {rng.choice(['Main St', 'Mountain Rd', 'Route 214', 'Route 23A', 'Hollow Rd', 'Creek Rd'])}\",
-            "mailing_city": rng.choice([zip_info['name'], zip_info['town'], \"New York\", \"Brooklyn\"]),
+            "mailing_address": f"{rng.randint(1, 999)} {rng.choice(['Main St', 'Mountain Rd', 'Route 214', 'Route 23A', 'Hollow Rd', 'Creek Rd'])}",
+            "mailing_city": rng.choice([zip_info['name'], zip_info['town'], "New York", "Brooklyn"]),
             "mailing_state": "NY",
             "mailing_zip": zip_code if rng.random() > 0.3 else rng.choice(["10001", "11201", "12414"]),
             "property_class": prop_class,
@@ -208,9 +208,9 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50, seed: int
             "latitude": lat,
             "longitude": lon,
             "coordinates": parcel_coords,
-            "deed_book": f\"{rng.randint(100, 999)}\",
-            "deed_page": f\"{rng.randint(1, 500)}\",
-            "last_sale_date": f\"{rng.randint(1995, 2024)}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}\",
+            "deed_book": f"{rng.randint(100, 999)}",
+            "deed_page": f"{rng.randint(1, 500)}",
+            "last_sale_date": f"{rng.randint(1995, 2024)}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}",
             "last_sale_price": rng.randint(75000, 600000) if rng.random() > 0.4 else None
         }
         parcels.append(parcel)
@@ -247,13 +247,13 @@ def fetch_from_nys_gis(zip_code: str) -> pd.DataFrame:
                 return df
             
             st.info("No data returned from NYS GIS. Using sample data.")
-            seed = st.session_state.get(\"sample_seed\", 42)
+            seed = st.session_state.get("sample_seed", 42)
             return generate_sample_data_for_zip(zip_code, seed=seed)
                 
     except requests.RequestException as e:
         st.warning(f"Could not connect to NYS GIS: {e}")
         st.info("Generating sample data for demonstration...")
-        seed = st.session_state.get(\"sample_seed\", 42)
+        seed = st.session_state.get("sample_seed", 42)
         return generate_sample_data_for_zip(zip_code, seed=seed)
 
 
@@ -336,7 +336,7 @@ def main():
                 
                 for i, zip_code in enumerate(zip_codes):
                     if data_source == "Sample Data (Demo)":
-                        seed = st.session_state.get(\"sample_seed\", 42)
+                        seed = st.session_state.get("sample_seed", 42)
                         df = generate_sample_data_for_zip(zip_code, num_parcels, seed=seed)
                     else:
                         df = fetch_from_nys_gis(zip_code)
