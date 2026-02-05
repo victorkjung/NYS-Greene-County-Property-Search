@@ -704,7 +704,7 @@ def main():
                 st.rerun()
             
             st.markdown("---")
-            st.info("💡 Go to **Data Management** page to fetch real NYS parcel data")
+            st.page_link("pages/4_🔧_Data_Management.py", label="🔧 Fetch Real NYS Data", icon="📡")
         
         st.markdown("---")
         
