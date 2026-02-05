@@ -298,7 +298,7 @@ def generate_sample_data(num_parcels: int = 500, seed: int | None = None) -> pd.
             "parcel_id": f"86.{rng.randint(1,25)}-{rng.randint(1,60)}-{rng.randint(1,99)}",
             "sbl": f"86.00-{rng.randint(1,9)}-{rng.randint(1,99)}.{rng.randint(0,999):03d}",
             "owner": rng.choice(sample_owners),
-            "mailing_address": f\"{rng.randint(1, 999)} {rng.choice(street_names)}\",
+            "mailing_address": f"{rng.randint(1, 999)} {rng.choice(street_names)}",
             "mailing_city": mailing_city,
             "mailing_state": "NY",
             "mailing_zip": mailing_zip,
@@ -316,9 +316,9 @@ def generate_sample_data(num_parcels: int = 500, seed: int | None = None) -> pd.
             "latitude": base_lat + lat_offset,
             "longitude": base_lon + lon_offset,
             "coordinates": coords,
-            "deed_book": f\"{rng.randint(100, 999)}\",
-            "deed_page": f\"{rng.randint(1, 500)}\",
-            "last_sale_date": f\"{rng.randint(1990, 2024)}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}\",
+            "deed_book": f"{rng.randint(100, 999)}",
+            "deed_page": f"{rng.randint(1, 500)}",
+            "last_sale_date": f"{rng.randint(1990, 2024)}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}",
             "last_sale_price": rng.randint(50000, 500000) if rng.random() > 0.3 else None
         }
         parcels.append(parcel)
