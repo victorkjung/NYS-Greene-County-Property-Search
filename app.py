@@ -155,6 +155,27 @@ def load_parcel_data(num_parcels: int = 500, seed: int | None = None):
         num_parcels: Number of sample parcels to generate if no data file exists
     """
     data_file = Path("data/lanesville_parcels.json")
+    geojson_file = Path("data/Greene_County_Tax_Parcels_-8841005964405968865.geojson")
+    use_geojson = True
+    config_file = Path("data/config.json")
+    if config_file.exists():
+        try:
+            with open(config_file, "r") as f:
+                cfg = json.load(f)
+            use_geojson = bool(cfg.get("use_geojson", True))
+        except Exception:
+            use_geojson = True
+    
+    # Prefer GeoJSON if enabled
+    if use_geojson and geojson_file.exists():
+        try:
+            with open(geojson_file, "r") as f:
+                data = json.load(f)
+            df = geojson_to_df(data)
+            if df is not None and len(df) > 0:
+                return df
+        except Exception as e:
+            print(f"Error loading GeoJSON data: {e}")
     
     # Try to load real data first
     if data_file.exists():
@@ -192,6 +213,65 @@ def load_parcel_data(num_parcels: int = 500, seed: int | None = None):
     
     # Fall back to sample data generation
     return generate_sample_data(num_parcels, seed=seed)
+
+
+def geojson_to_df(data: dict) -> pd.DataFrame | None:
+    if not isinstance(data, dict) or data.get("type") != "FeatureCollection":
+        return None
+    records = []
+    for feature in data.get("features", []):
+        props = feature.get("properties", {}) or {}
+        geom = feature.get("geometry", {}) or {}
+        coords = []
+        lat = None
+        lon = None
+        if geom.get("type") == "Polygon":
+            ring = (geom.get("coordinates") or [[]])[0]
+            coords = [[c[1], c[0]] for c in ring[:100]] if ring else []
+        elif geom.get("type") == "MultiPolygon":
+            ring = (geom.get("coordinates") or [[[]]])[0][0]
+            coords = [[c[1], c[0]] for c in ring[:100]] if ring else []
+        if coords:
+            lats = [c[0] for c in coords]
+            lons = [c[1] for c in coords]
+            lat = sum(lats) / len(lats)
+            lon = sum(lons) / len(lons)
+        record = {
+            "parcel_id": props.get("parcel_id") or props.get("PRINT_KEY") or props.get("SBL") or props.get("PARCEL_ID") or "",
+            "sbl": props.get("sbl") or props.get("SBL") or "",
+            "owner": props.get("owner") or props.get("OWNER") or props.get("OWNER_NAME") or "Unknown",
+            "mailing_address": props.get("mailing_address") or props.get("MAIL_ADDR") or "",
+            "mailing_city": props.get("mailing_city") or props.get("MAIL_CITY") or "",
+            "mailing_state": props.get("mailing_state") or props.get("MAIL_STATE") or "NY",
+            "mailing_zip": str(props.get("mailing_zip") or props.get("MAIL_ZIP") or ""),
+            "property_class": str(props.get("property_class") or props.get("PROP_CLASS") or ""),
+            "property_class_desc": props.get("property_class_desc") or props.get("CLASS_DESC") or "Unknown",
+            "acreage": float(props.get("acreage") or props.get("CALC_ACRES") or props.get("ACRES") or 0),
+            "assessed_value": int(props.get("assessed_value") or props.get("TOTAL_AV") or 0),
+            "land_value": int(props.get("land_value") or props.get("LAND_AV") or 0),
+            "improvement_value": int(props.get("improvement_value") or 0),
+            "tax_year": int(props.get("tax_year") or 2024),
+            "annual_taxes": float(props.get("annual_taxes") or 0),
+            "school_district": props.get("school_district") or props.get("SCHOOL_NAME") or "",
+            "municipality": props.get("municipality") or props.get("MUNI_NAME") or "",
+            "county": props.get("county") or "Greene",
+            "latitude": lat,
+            "longitude": lon,
+            "coordinates": coords,
+            "deed_book": str(props.get("deed_book") or props.get("DEED_BOOK") or ""),
+            "deed_page": str(props.get("deed_page") or props.get("DEED_PAGE") or ""),
+            "last_sale_date": props.get("last_sale_date") or props.get("SALE_DATE") or "",
+            "last_sale_price": props.get("last_sale_price") or props.get("SALE_PRICE") or None
+        }
+        records.append(record)
+    df = pd.DataFrame(records)
+    if df.empty:
+        return df
+    df = df.dropna(subset=["latitude", "longitude"])
+    df["property_class_desc"] = df["property_class_desc"].fillna("Unknown")
+    df["owner"] = df["owner"].fillna("Unknown")
+    df["annual_taxes"] = df["annual_taxes"].fillna(df["assessed_value"] * 0.025)
+    return df
 
 
 def generate_sample_data(num_parcels: int = 500, seed: int | None = None) -> pd.DataFrame:
