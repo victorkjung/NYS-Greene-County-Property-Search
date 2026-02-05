@@ -6,12 +6,18 @@ A Streamlit application for exploring tax parcels and property ownership in Lane
 import streamlit as st
 import pandas as pd
 import numpy as np
-import folium
-from folium.plugins import Draw, MousePosition, Fullscreen, LocateControl
-from streamlit_folium import st_folium
+import pydeck as pdk
 import json
 from pathlib import Path
 import random
+import html
+from sklearn.neighbors import NearestNeighbors
+import requests
+import hashlib
+import os
+
+from constants import PROPERTY_CLASS_DESC, CLASS_COLORS
+from ui import apply_base_styles
 
 # Page configuration
 st.set_page_config(
@@ -21,28 +27,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for OnXHunt-style UI
-st.markdown("""
-<style>
-    /* Main container styling */
-    .stApp {
-        background-color: #1a1a2e;
-    }
-    
+apply_base_styles("""
     /* Sidebar styling */
-    [data-testid="stSidebar"] {
+    [data-testid=\"stSidebar\"] {
         background-color: #16213e;
         border-right: 2px solid #e94560;
     }
     
-    [data-testid="stSidebar"] .stMarkdown {
+    [data-testid=\"stSidebar\"] .stMarkdown {
         color: #eaeaea;
-    }
-    
-    /* Headers */
-    h1, h2, h3 {
-        color: #e94560 !important;
-        font-family: 'Segoe UI', sans-serif;
     }
     
     /* Property card styling */
@@ -116,7 +109,7 @@ st.markdown("""
     }
     
     /* Metrics styling */
-    [data-testid="stMetricValue"] {
+    [data-testid=\"stMetricValue\"] {
         color: #e94560;
     }
     
@@ -147,12 +140,11 @@ st.markdown("""
         padding: 20px;
         font-size: 12px;
     }
-</style>
-""", unsafe_allow_html=True)
+""")
 
 
 @st.cache_data
-def load_parcel_data(num_parcels: int = 500):
+def load_parcel_data(num_parcels: int = 500, seed: int | None = None):
     """Load parcel data from cache file or generate sample data for Lanesville, NY
     
     Priority:
@@ -199,10 +191,10 @@ def load_parcel_data(num_parcels: int = 500):
             print(f"Error loading cached data: {e}")
     
     # Fall back to sample data generation
-    return generate_sample_data(num_parcels)
+    return generate_sample_data(num_parcels, seed=seed)
 
 
-def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
+def generate_sample_data(num_parcels: int = 500, seed: int | None = None) -> pd.DataFrame:
     """Generate sample parcel data for demonstration
     
     Args:
@@ -210,6 +202,8 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
     """
     # Lanesville is located approximately at 42.1856° N, 74.2848° W
     # These are representative sample parcels - replace with real data
+    
+    rng = random.Random(seed)
     
     sample_owners = [
         "Johnson Family Trust", "Smith, Robert & Mary", "Mountain View LLC",
@@ -242,30 +236,11 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
         "Tannersville Development Corp", "Hunter Valley LLC"
     ]
     
-    property_classes = {
-        "210": "One Family Residential",
-        "220": "Two Family Residential",
-        "240": "Rural Residence",
-        "260": "Seasonal Residence",
-        "270": "Mobile Home",
-        "280": "Multiple Residences",
-        "311": "Vacant Land - Residential",
-        "312": "Vacant Land - Under 10 Acres",
-        "322": "Vacant Land - Over 10 Acres",
-        "910": "Private Forest",
-        "920": "State Forest",
-        "930": "State Owned - Other",
-        "940": "State Reforestation",
-        "105": "Agricultural Vacant",
-        "112": "Dairy Farm",
-        "117": "Horse Farm",
-        "120": "Field Crops",
-        "421": "Restaurant",
-        "485": "One Story Small Structure",
-        "582": "Camping Facility",
-        "620": "Religious",
-        "651": "Highway Garage"
-    }
+    property_classes = {k: v for k, v in PROPERTY_CLASS_DESC.items() if k in {
+        "210", "220", "240", "260", "270", "280", "311", "312", "322",
+        "910", "920", "930", "940", "105", "112", "117", "120", "421",
+        "485", "582", "620", "651"
+    }}
     
     # Zip codes in the coverage area
     local_zips = ["12450", "12442", "12485", "12434", "12424", "12439", "12468"]
@@ -279,21 +254,21 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
     # Create a grid-like distribution with some randomness
     for i in range(num_parcels):
         # Distribute parcels across a larger area
-        lat_offset = random.uniform(-0.05, 0.05)
-        lon_offset = random.uniform(-0.07, 0.07)
+        lat_offset = rng.uniform(-0.05, 0.05)
+        lon_offset = rng.uniform(-0.07, 0.07)
         
-        prop_class = random.choice(list(property_classes.keys()))
-        acreage = round(random.uniform(0.5, 50.0), 2)
+        prop_class = rng.choice(list(property_classes.keys()))
+        acreage = round(rng.uniform(0.5, 50.0), 2)
         
         # Adjust acreage based on property class
         if prop_class in ["322", "910", "920", "930", "940"]:
-            acreage = round(random.uniform(20.0, 200.0), 2)
+            acreage = round(rng.uniform(20.0, 200.0), 2)
         elif prop_class in ["311", "312"]:
-            acreage = round(random.uniform(0.5, 15.0), 2)
+            acreage = round(rng.uniform(0.5, 15.0), 2)
         
-        assessed_value = int(acreage * random.uniform(5000, 25000))
+        assessed_value = int(acreage * rng.uniform(5000, 25000))
         if prop_class in ["210", "220", "240", "260"]:
-            assessed_value += random.randint(80000, 350000)
+            assessed_value += rng.randint(80000, 350000)
         
         # Generate parcel polygon (simplified rectangle)
         size_factor = min(acreage * 0.0001, 0.005)  # Cap size for display
@@ -305,12 +280,12 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
         ]
         
         # Assign zip code - 70% local, 30% non-local
-        if random.random() > 0.3:
-            mailing_zip = random.choice(local_zips)
-            mailing_city = random.choice(["Lanesville", "Hunter", "Tannersville", "Haines Falls", "Jewett"])
+        if rng.random() > 0.3:
+            mailing_zip = rng.choice(local_zips)
+            mailing_city = rng.choice(["Lanesville", "Hunter", "Tannersville", "Haines Falls", "Jewett"])
         else:
-            mailing_zip = random.choice(nonlocal_zips)
-            mailing_city = random.choice(["New York", "Brooklyn", "Catskill"])
+            mailing_zip = rng.choice(nonlocal_zips)
+            mailing_city = rng.choice(["New York", "Brooklyn", "Catskill"])
         
         # Street names (defined outside f-string to avoid escape issues)
         street_names = [
@@ -320,10 +295,10 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
         ]
         
         parcel = {
-            "parcel_id": f"86.{random.randint(1,25)}-{random.randint(1,60)}-{random.randint(1,99)}",
-            "sbl": f"86.00-{random.randint(1,9)}-{random.randint(1,99)}.{random.randint(0,999):03d}",
-            "owner": random.choice(sample_owners),
-            "mailing_address": f"{random.randint(1, 999)} {random.choice(street_names)}",
+            "parcel_id": f"86.{rng.randint(1,25)}-{rng.randint(1,60)}-{rng.randint(1,99)}",
+            "sbl": f"86.00-{rng.randint(1,9)}-{rng.randint(1,99)}.{rng.randint(0,999):03d}",
+            "owner": rng.choice(sample_owners),
+            "mailing_address": f\"{rng.randint(1, 999)} {rng.choice(street_names)}\",
             "mailing_city": mailing_city,
             "mailing_state": "NY",
             "mailing_zip": mailing_zip,
@@ -331,8 +306,8 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
             "property_class_desc": property_classes[prop_class],
             "acreage": acreage,
             "assessed_value": assessed_value,
-            "land_value": int(assessed_value * random.uniform(0.2, 0.5)),
-            "improvement_value": int(assessed_value * random.uniform(0.5, 0.8)),
+            "land_value": int(assessed_value * rng.uniform(0.2, 0.5)),
+            "improvement_value": int(assessed_value * rng.uniform(0.5, 0.8)),
             "tax_year": 2024,
             "annual_taxes": round(assessed_value * 0.025, 2),
             "school_district": "Hunter-Tannersville CSD",
@@ -341,10 +316,10 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
             "latitude": base_lat + lat_offset,
             "longitude": base_lon + lon_offset,
             "coordinates": coords,
-            "deed_book": f"{random.randint(100, 999)}",
-            "deed_page": f"{random.randint(1, 500)}",
-            "last_sale_date": f"{random.randint(1990, 2024)}-{random.randint(1,12):02d}-{random.randint(1,28):02d}",
-            "last_sale_price": random.randint(50000, 500000) if random.random() > 0.3 else None
+            "deed_book": f\"{rng.randint(100, 999)}\",
+            "deed_page": f\"{rng.randint(1, 500)}\",
+            "last_sale_date": f\"{rng.randint(1990, 2024)}-{rng.randint(1,12):02d}-{rng.randint(1,28):02d}\",
+            "last_sale_price": rng.randint(50000, 500000) if rng.random() > 0.3 else None
         }
         parcels.append(parcel)
     
@@ -353,159 +328,196 @@ def generate_sample_data(num_parcels: int = 500) -> pd.DataFrame:
 
 def get_parcel_color(property_class):
     """Return color based on property classification"""
-    class_colors = {
-        "2": "#4CAF50",   # Residential - Green
-        "3": "#FFC107",   # Vacant Land - Yellow
-        "9": "#2196F3",   # State/Forest - Blue
-        "1": "#8BC34A",   # Agricultural - Light Green
-        "4": "#FF5722",   # Commercial - Orange
-        "5": "#9C27B0",   # Recreation - Purple
-        "6": "#607D8B",   # Community Service - Gray
+    if not property_class:
+        return "#757575"
+    return CLASS_COLORS.get(str(property_class)[0], "#757575")
+
+
+def _map_style(style_name: str) -> str:
+    styles = {
+        "satellite": "mapbox://styles/mapbox/satellite-v9",
+        "topo": "mapbox://styles/mapbox/outdoors-v12",
+        "streets": "mapbox://styles/mapbox/streets-v12",
+        "dark": "mapbox://styles/mapbox/dark-v11",
     }
-    return class_colors.get(property_class[0], "#757575")
+    return styles.get(style_name, styles["satellite"])
 
 
-def create_map(df, selected_parcel=None, show_labels=True, map_style="satellite"):
-    """Create the interactive Folium map"""
-    
-    # Handle empty dataframe - default to Lanesville center
-    if df.empty or df['latitude'].isna().all():
+def _prepare_deck_data(df: pd.DataFrame) -> pd.DataFrame:
+    working = df.copy()
+    working = working.dropna(subset=["latitude", "longitude"])
+    working["owner_safe"] = working["owner"].astype(str).apply(html.escape)
+    working["parcel_id_safe"] = working["parcel_id"].astype(str).apply(html.escape)
+    working["property_class_desc_safe"] = working["property_class_desc"].astype(str).apply(html.escape)
+    working["color"] = working["property_class"].apply(get_parcel_color)
+    # Pydeck expects [lng, lat]
+    working["polygon"] = working["coordinates"].apply(
+        lambda coords: [[c[1], c[0]] for c in coords] if isinstance(coords, list) else []
+    )
+    return working
+
+
+def _build_layers(df: pd.DataFrame, show_labels: bool, aggregated: bool, hex_radius_m: int) -> list:
+    layers = []
+    if df.empty:
+        return layers
+
+    if aggregated:
+        layers.append(
+            pdk.Layer(
+                "HexagonLayer",
+                df,
+                get_position="[longitude, latitude]",
+                radius=hex_radius_m,
+                elevation_scale=4,
+                elevation_range=[0, 1200],
+                pickable=True,
+                extruded=True,
+                coverage=0.88,
+            )
+        )
+    else:
+        polygon_df = df[df["polygon"].apply(lambda p: isinstance(p, list) and len(p) >= 3)]
+        if not polygon_df.empty:
+            layers.append(
+                pdk.Layer(
+                    "PolygonLayer",
+                    polygon_df,
+                    get_polygon="polygon",
+                    get_fill_color="[r, g, b]",
+                    get_line_color=[233, 69, 96],
+                    line_width_min_pixels=1,
+                    pickable=True,
+                    opacity=0.45,
+                )
+            )
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                df,
+                get_position="[longitude, latitude]",
+                get_radius=20,
+                get_fill_color=[233, 69, 96],
+                pickable=True,
+                opacity=0.6,
+            )
+        )
+
+    if show_labels and len(df) <= 1500:
+        layers.append(
+            pdk.Layer(
+                "TextLayer",
+                df,
+                get_position="[longitude, latitude]",
+                get_text="owner_safe",
+                get_size=10,
+                get_color=[255, 255, 255],
+                get_angle=0,
+                billboard=True,
+            )
+        )
+    return layers
+
+
+def create_deck_map(df: pd.DataFrame, map_style: str, show_labels: bool, aggregated: bool, hex_radius_m: int):
+    if df.empty or df["latitude"].isna().all():
         center_lat = 42.1856
         center_lon = -74.2848
+        zoom = 12
     else:
-        center_lat = df['latitude'].mean()
-        center_lon = df['longitude'].mean()
-        
-        # Additional NaN check
+        center_lat = df["latitude"].mean()
+        center_lon = df["longitude"].mean()
         if pd.isna(center_lat) or pd.isna(center_lon):
             center_lat = 42.1856
             center_lon = -74.2848
-    
-    # Map tile options
-    tiles_map = {
-        "satellite": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        "topo": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-        "streets": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "dark": "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-    }
-    
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles=None
+        zoom = 12
+
+    prepared = _prepare_deck_data(df)
+
+    # Convert hex color to RGB list
+    def hex_to_rgb(color: str) -> list:
+        color = color.lstrip("#")
+        return [int(color[i:i+2], 16) for i in (0, 2, 4)]
+
+    prepared["r"] = prepared["color"].apply(lambda c: hex_to_rgb(c)[0])
+    prepared["g"] = prepared["color"].apply(lambda c: hex_to_rgb(c)[1])
+    prepared["b"] = prepared["color"].apply(lambda c: hex_to_rgb(c)[2])
+
+    layers = _build_layers(prepared, show_labels=show_labels, aggregated=aggregated, hex_radius_m=hex_radius_m)
+    view_state = pdk.ViewState(
+        latitude=center_lat,
+        longitude=center_lon,
+        zoom=zoom,
+        pitch=35,
     )
-    
-    # Add base layers
-    folium.TileLayer(
-        tiles=tiles_map.get(map_style, tiles_map["satellite"]),
-        attr="Esri/OpenStreetMap/OpenTopoMap",
-        name="Base Map"
-    ).add_to(m)
-    
-    # Add satellite layer option
-    folium.TileLayer(
-        tiles=tiles_map["satellite"],
-        attr="Esri",
-        name="Satellite",
-        overlay=False
-    ).add_to(m)
-    
-    # Add topo layer option
-    folium.TileLayer(
-        tiles=tiles_map["topo"],
-        attr="OpenTopoMap",
-        name="Topographic",
-        overlay=False
-    ).add_to(m)
-    
-    # Create feature groups for different property types
-    residential_group = folium.FeatureGroup(name="🏠 Residential", show=True)
-    vacant_group = folium.FeatureGroup(name="🌲 Vacant Land", show=True)
-    state_group = folium.FeatureGroup(name="🏛️ State/Public", show=True)
-    other_group = folium.FeatureGroup(name="📍 Other", show=True)
-    
-    for _, row in df.iterrows():
-        color = get_parcel_color(row['property_class'])
-        is_selected = selected_parcel and row['parcel_id'] == selected_parcel
-        
-        # Create polygon for parcel
-        polygon = folium.Polygon(
-            locations=row['coordinates'],
-            color='#e94560' if is_selected else color,
-            weight=3 if is_selected else 1,
-            fill=True,
-            fillColor=color,
-            fillOpacity=0.6 if is_selected else 0.35,
-            popup=folium.Popup(
-                f"""
-                <div style="font-family: Arial; min-width: 250px;">
-                    <h4 style="color: #e94560; margin-bottom: 10px;">{row['owner']}</h4>
-                    <hr style="border-color: #e94560;">
-                    <p><strong>Parcel ID:</strong> {row['parcel_id']}</p>
-                    <p><strong>SBL:</strong> {row['sbl']}</p>
-                    <p><strong>Class:</strong> {row['property_class_desc']}</p>
-                    <p><strong>Acreage:</strong> {row['acreage']:.2f} acres</p>
-                    <p><strong>Assessed Value:</strong> ${row['assessed_value']:,}</p>
-                    <p><strong>Annual Taxes:</strong> ${row['annual_taxes']:,.2f}</p>
-                    <hr>
-                    <p><strong>Mailing Address:</strong><br>
-                    {row['mailing_address']}<br>
-                    {row['mailing_city']}, {row['mailing_state']} {row['mailing_zip']}</p>
-                </div>
-                """,
-                max_width=300
-            ),
-            tooltip=f"{row['owner']} - {row['acreage']:.1f} ac"
+
+    tooltip = {
+        "html": "<b>{owner_safe}</b><br/>Parcel: {parcel_id_safe}<br/>{property_class_desc_safe}<br/>Acres: {acreage}<br/>Assessed: ${assessed_value}",
+        "style": {"backgroundColor": "#16213e", "color": "white"},
+    }
+
+    return pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_style=_map_style(map_style),
+        tooltip=tooltip,
+    )
+
+def get_spatial_index(df: pd.DataFrame):
+    coords = df[["latitude", "longitude"]].to_numpy()
+    if coords.size == 0:
+        return None, False
+    coords_rounded = np.round(coords, 6)
+    hash_key = hashlib.sha256(coords_rounded.tobytes()).hexdigest()
+    cache = st.session_state.setdefault("spatial_index_cache", {})
+    if hash_key in cache:
+        return cache[hash_key], True
+    nn = NearestNeighbors(n_neighbors=1, algorithm="ball_tree", metric="haversine")
+    nn.fit(np.radians(coords_rounded))
+    cache[hash_key] = nn
+    return nn, False
+
+
+@st.cache_data
+def geocode_address(address: str):
+    if not address:
+        return None
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": address, "format": "json", "limit": 1},
+            headers={"User-Agent": "lanesville-property-finder/1.0"},
+            timeout=10,
         )
-        
-        # Add to appropriate group
-        prop_class = row['property_class'][0]
-        if prop_class == "2":
-            polygon.add_to(residential_group)
-        elif prop_class == "3":
-            polygon.add_to(vacant_group)
-        elif prop_class == "9":
-            polygon.add_to(state_group)
-        else:
-            polygon.add_to(other_group)
-        
-        # Add label if enabled
-        if show_labels:
-            folium.Marker(
-                location=[row['latitude'], row['longitude']],
-                icon=folium.DivIcon(
-                    html=f'<div style="font-size: 8px; color: white; text-shadow: 1px 1px 2px black; white-space: nowrap;">{row["owner"][:15]}</div>',
-                    icon_size=(100, 20),
-                    icon_anchor=(50, 10)
-                )
-            ).add_to(m)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            raise ValueError("Nominatim no results")
+        return float(data[0]["lat"]), float(data[0]["lon"])
+    except requests.RequestException:
+        pass
+    except ValueError:
+        pass
     
-    # Add feature groups to map
-    residential_group.add_to(m)
-    vacant_group.add_to(m)
-    state_group.add_to(m)
-    other_group.add_to(m)
-    
-    # Add controls
-    folium.LayerControl(collapsed=False).add_to(m)
-    Fullscreen(position="topleft").add_to(m)
-    LocateControl(auto_start=False, position="topleft").add_to(m)
-    MousePosition(position="bottomleft").add_to(m)
-    
-    # Add drawing tools
-    Draw(
-        draw_options={
-            "polyline": True,
-            "polygon": True,
-            "circle": False,
-            "marker": True,
-            "circlemarker": False,
-            "rectangle": True
-        },
-        edit_options={"edit": True, "remove": True}
-    ).add_to(m)
-    
-    return m
+    # Fallback: Mapbox Geocoding API (requires MAPBOX_ACCESS_TOKEN)
+    mapbox_token = os.environ.get("MAPBOX_ACCESS_TOKEN")
+    if not mapbox_token:
+        return None
+    try:
+        resp = requests.get(
+            f"https://api.mapbox.com/geocoding/v5/mapbox.places/{address}.json",
+            params={"access_token": mapbox_token, "limit": 1},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        features = data.get("features", [])
+        if not features:
+            return None
+        lon, lat = features[0]["center"]
+        return float(lat), float(lon)
+    except requests.RequestException:
+        return None
 
 
 def display_property_details(parcel):
@@ -550,9 +562,13 @@ def main():
     # Initialize session state for parcel count
     if 'num_parcels' not in st.session_state:
         st.session_state.num_parcels = 500
+    if 'sample_seed' not in st.session_state:
+        st.session_state.sample_seed = 42
     
     # Load data with current parcel count
-    df = load_parcel_data(st.session_state.num_parcels)
+    df = load_parcel_data(st.session_state.num_parcels, seed=st.session_state.sample_seed)
+    if df is None or df.empty:
+        df = generate_sample_data(st.session_state.num_parcels, seed=st.session_state.sample_seed)
     
     # Sidebar
     with st.sidebar:
@@ -632,6 +648,23 @@ def main():
         )
         
         show_labels = st.checkbox("Show Owner Labels", value=False)
+        st.markdown("### ⚡ Performance")
+        use_aggregate = st.checkbox("Aggregate large datasets", value=True)
+        aggregate_threshold = st.slider(
+            "Aggregation threshold (parcels)",
+            min_value=1000,
+            max_value=20000,
+            value=3000,
+            step=500,
+        )
+        global HEX_RADIUS_METERS
+        hex_radius_m = st.slider(
+            "Hex radius (meters)",
+            min_value=30,
+            max_value=200,
+            value=80,
+            step=10,
+        )
         
         st.markdown("---")
         
@@ -746,33 +779,79 @@ def main():
         # Check if we have data to display
         if filtered_df.empty:
             st.warning("⚠️ No parcels match your current filters. Try adjusting your search criteria.")
-            # Show empty map centered on Lanesville
-            m = folium.Map(
-                location=[42.1856, -74.2848],
-                zoom_start=14,
-                tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                attr="Esri"
-            )
-            st_folium(m, width=None, height=600)
         else:
-            # Create and display map
-            m = create_map(filtered_df, show_labels=show_labels, map_style=map_style)
-            map_data = st_folium(m, width=None, height=600, returned_objects=["last_object_clicked"])
-            
-            # Handle map clicks
-            if map_data and map_data.get("last_object_clicked"):
-                clicked_lat = map_data["last_object_clicked"].get("lat")
-                clicked_lng = map_data["last_object_clicked"].get("lng")
-                st.session_state['clicked_location'] = (clicked_lat, clicked_lng)
+            use_aggregate = use_aggregate and len(filtered_df) > aggregate_threshold
+            deck = create_deck_map(
+                filtered_df,
+                map_style=map_style,
+                show_labels=show_labels,
+                aggregated=use_aggregate,
+                hex_radius_m=hex_radius_m,
+            )
+            st.pydeck_chart(deck, height=600)
     
     with details_col:
         st.markdown("### 📋 Property Details")
         
+        # Nearest parcel search
+        st.markdown("##### 🎯 Find Nearest Parcel (by coordinates)")
+        st.caption("Note: pydeck click events aren’t available in Streamlit yet, so use coordinates or address lookup.")
+        address_query = st.text_input("Address (optional)")
+        geocode_col1, geocode_col2 = st.columns([1, 3])
+        with geocode_col1:
+                if st.button("Geocode"):
+                    result = geocode_address(address_query)
+                    if result:
+                        st.session_state["target_lat"] = result[0]
+                        st.session_state["target_lon"] = result[1]
+                        st.success(f"Geocoded to {result[0]:.6f}, {result[1]:.6f}")
+                    else:
+                        st.warning("Address not found. If you have a Mapbox token, set MAPBOX_ACCESS_TOKEN.")
+        with geocode_col2:
+            st.write("")
+        
+        coord_col1, coord_col2, coord_col3 = st.columns([1, 1, 1])
+        with coord_col1:
+            target_lat = st.number_input(
+                "Latitude",
+                value=st.session_state.get("target_lat", 42.1856),
+                format="%.6f"
+            )
+        with coord_col2:
+            target_lon = st.number_input(
+                "Longitude",
+                value=st.session_state.get("target_lon", -74.2848),
+                format="%.6f"
+            )
+        with coord_col3:
+            if st.button("Find Nearest"):
+                if not filtered_df.empty:
+                    nn, used_cache = get_spatial_index(filtered_df)
+                    if nn is None:
+                        st.warning("No valid coordinates available for spatial search.")
+                    else:
+                        if used_cache:
+                            st.caption("Using cached spatial index.")
+                        target = np.radians([[target_lat, target_lon]])
+                        dist, idx = nn.kneighbors(target, n_neighbors=1)
+                        nearest = filtered_df.iloc[int(idx[0][0])]
+                        st.session_state['selected_owner'] = nearest['owner']
+                        st.session_state['selected_parcel_id'] = nearest['parcel_id']
+                        st.success(f"Nearest parcel: {nearest['parcel_id']} ({nearest['owner']})")
+                else:
+                    st.warning("No parcels available to search.")
+        
         # Property selector
+        owner_options = [""] + list(filtered_df['owner'].unique())
         selected_owner = st.selectbox(
             "Select Property:",
-            options=[""] + list(filtered_df['owner'].unique()),
-            format_func=lambda x: "Choose a property..." if x == "" else x
+            options=owner_options,
+            format_func=lambda x: "Choose a property..." if x == "" else x,
+            index=(
+                0 if st.session_state.get('selected_owner') not in filtered_df['owner'].unique()
+                else owner_options.index(st.session_state.get('selected_owner'))
+            ),
+            key="selected_owner"
         )
         
         if selected_owner:
@@ -780,7 +859,15 @@ def main():
             
             if len(owner_parcels) > 1:
                 parcel_options = owner_parcels['parcel_id'].tolist()
-                selected_parcel_id = st.selectbox("Select Parcel:", parcel_options)
+                selected_parcel_id = st.selectbox(
+                    "Select Parcel:",
+                    parcel_options,
+                    index=(
+                        0 if st.session_state.get('selected_parcel_id') not in parcel_options
+                        else parcel_options.index(st.session_state.get('selected_parcel_id'))
+                    ),
+                    key="selected_parcel_id"
+                )
                 selected_parcel = owner_parcels[owner_parcels['parcel_id'] == selected_parcel_id].iloc[0]
             else:
                 selected_parcel = owner_parcels.iloc[0]
@@ -788,13 +875,12 @@ def main():
             display_property_details(selected_parcel)
             
             # Export button
-            if st.button("📄 Export Property Report"):
-                st.download_button(
-                    label="Download JSON",
-                    data=json.dumps(selected_parcel.to_dict(), indent=2, default=str),
-                    file_name=f"property_{selected_parcel['parcel_id'].replace('.', '_')}.json",
-                    mime="application/json"
-                )
+            st.download_button(
+                label="📄 Download Property Report (JSON)",
+                data=json.dumps(selected_parcel.to_dict(), indent=2, default=str),
+                file_name=f\"property_{selected_parcel['parcel_id'].replace('.', '_')}.json\",
+                mime=\"application/json\"
+            )
         else:
             st.info("👆 Click on a parcel in the map or select an owner above to view details.")
     
