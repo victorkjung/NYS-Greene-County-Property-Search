@@ -641,7 +641,7 @@ def display_property_details(parcel):
 def main():
     # Initialize session state for parcel count
     if 'num_parcels' not in st.session_state:
-        st.session_state.num_parcels = 500
+        st.session_state.num_parcels = 5000
     if 'sample_seed' not in st.session_state:
         st.session_state.sample_seed = 42
     
@@ -805,9 +805,9 @@ def main():
             new_num_parcels = st.slider(
                 "Sample Parcels:",
                 min_value=100,
-                max_value=2000,
+                max_value=5000,
                 value=st.session_state.num_parcels,
-                step=100,
+                step=250,
                 help="Number of sample parcels to generate"
             )
             
