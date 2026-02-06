@@ -179,8 +179,8 @@ def main():
         st.metric("Average Tax per Parcel", f"${avg_tax:,.0f}")
     
     with col3:
-    acreage_sum = df['acreage'].sum()
-    tax_per_acre = total_taxes / acreage_sum if acreage_sum else 0
+        acreage_sum = df['acreage'].sum()
+        tax_per_acre = total_taxes / acreage_sum if acreage_sum else 0
         st.metric("Tax per Acre (avg)", f"${tax_per_acre:,.2f}")
     
     # Tax by property type
