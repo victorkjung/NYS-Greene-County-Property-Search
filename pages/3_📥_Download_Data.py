@@ -218,13 +218,18 @@ def generate_sample_data_for_zip(zip_code: str, num_parcels: int = 50, seed: int
     return pd.DataFrame(parcels)
 
 
-def fetch_from_nys_gis(zip_code: str) -> pd.DataFrame:
+def fetch_from_nys_gis(
+    zip_code: str,
+    show_messages: bool = True,
+    fallback_df: pd.DataFrame | None = None
+) -> pd.DataFrame:
     """
     Attempt to fetch real parcel data from NYS GIS services.
     Falls back to sample data if unavailable.
     """
     if zip_code not in ZIP_COORDINATES:
-        st.warning(f"Zip code {zip_code} not in coverage area.")
+        if show_messages:
+            st.warning(f"Zip code {zip_code} not in coverage area.")
         return pd.DataFrame()
     
     coords = ZIP_COORDINATES[zip_code]
@@ -243,16 +248,28 @@ def fetch_from_nys_gis(zip_code: str) -> pd.DataFrame:
             df = fetcher.fetch_parcels(bbox=bbox, county="Greene", max_records=2000)
             
             if df is not None and not df.empty:
-                st.success(f"Retrieved {len(df)} parcels from NYS GIS")
+                if show_messages:
+                    st.success(f"Retrieved {len(df)} parcels from NYS GIS")
                 return df
             
-            st.info("No data returned from NYS GIS. Using sample data.")
+            if fallback_df is not None and not fallback_df.empty:
+                if show_messages:
+                    st.info("No data returned from NYS GIS. Using cached dataset.")
+                return filter_by_zip(fallback_df, zip_code)
+            if show_messages:
+                st.info("No data returned from NYS GIS. Using sample data.")
             seed = st.session_state.get("sample_seed", 42)
             return generate_sample_data_for_zip(zip_code, seed=seed)
                 
     except requests.RequestException as e:
-        st.warning(f"Could not connect to NYS GIS: {e}")
-        st.info("Generating sample data for demonstration...")
+        if fallback_df is not None and not fallback_df.empty:
+            if show_messages:
+                st.warning(f"Could not connect to NYS GIS: {e}")
+                st.info("Using cached dataset.")
+            return filter_by_zip(fallback_df, zip_code)
+        if show_messages:
+            st.warning(f"Could not connect to NYS GIS: {e}")
+            st.info("Generating sample data for demonstration...")
         seed = st.session_state.get("sample_seed", 42)
         return generate_sample_data_for_zip(zip_code, seed=seed)
 
@@ -300,8 +317,9 @@ def main():
         with col1:
             data_source = st.radio(
                 "Data Source:",
-                ["Sample Data (Demo)", "NYS GIS (Live)"],
-                help="Sample data is for demonstration. NYS GIS attempts to fetch real data."
+                ["Cached Dataset", "NYS GIS (Live)", "Sample Data (Demo)"],
+                index=0,
+                help="Cached dataset uses your local/full dataset. NYS GIS attempts live fetch. Sample is demo data."
             )
         
         with col2:
@@ -335,11 +353,15 @@ def main():
                 progress_bar = st.progress(0)
                 
                 for i, zip_code in enumerate(zip_codes):
-                    if data_source == "Sample Data (Demo)":
+                    if data_source == "Cached Dataset":
+                        full_df = load_all_data()
+                        df = filter_by_zip(full_df, zip_code)
+                    elif data_source == "Sample Data (Demo)":
                         seed = st.session_state.get("sample_seed", 42)
                         df = generate_sample_data_for_zip(zip_code, num_parcels, seed=seed)
                     else:
-                        df = fetch_from_nys_gis(zip_code)
+                        full_df = load_all_data()
+                        df = fetch_from_nys_gis(zip_code, show_messages=True, fallback_df=full_df)
                     
                     if not df.empty:
                         # Apply filters
