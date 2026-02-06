@@ -1,4 +1,4 @@
-# 🗺️ Lanesville Property Finder
+# 🗺️ Greene County Property Finder
 
 An **OnXHunt-style** property owner identification application for Lanesville, NY (Town of Hunter, Greene County). Built with Streamlit, this application provides interactive mapping, parcel visualization, and owner lookup capabilities.
 
